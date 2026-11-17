@@ -5,7 +5,7 @@ Self-healing boot for the PicoClaw agent on Render. The PicoClaw service runs on
 ## How it works
 
 - `bootstrap.sh` — POSIX sh, fail-open. At container start it installs `curl` / `gcompat` / `nodejs` if missing, pulls every row of the Supabase `agent_files` table using `$SUPABASE_URL` + `$SUPABASE_SERVICE_KEY` from the environment (never hardcoded, never printed), and writes the workspace files (SOUL, skills, tools, configs, crons, state) to `$HOME/.picoclaw/workspace`. On any error it still exits 0 so the launcher starts.
-- `entrypoint.sh` — runs `bootstrap.sh`, then starts the launcher exactly as the stock image does (`picoclaw-launcher -console -public -no-browser`).
+- `entrypoint.sh` — runs `bootstrap.sh`, then starts the launcher exactly as the stock image does (`picoclaw-launcher -console -public -no-browser`). v2 (2026-11-17): the launcher runs in the background and a SOUL guard watches the workspace for the life of the container — the launcher's first-run initialisation overwrites the restored SOUL.md with its 351-byte default, so whenever SOUL.md is missing or smaller than 1,000 bytes the guard re-runs `bootstrap.sh` so the full restored SOUL (and workspace file set) wins. A healthy SOUL is never touched.
 - `Dockerfile` — builds on the stock image (`docker.io/sipeed/picoclaw:launcher`), copies in `bootstrap.sh` and `entrypoint.sh`, and sets the entrypoint. No start-command trickery is needed: Render's Docker Command cannot chain shell commands — it execs the first word directly, with no shell, so `sh -c "..."` wrappers and `;` chains both fail there.
 - `.github/workflows/docker.yml` — on every push to `main` that touches these files, builds the image and pushes it to GHCR as `ghcr.io/baisakib534-hue/picoclaw-bootstrap:latest` (public).
 
@@ -18,8 +18,18 @@ Self-healing boot for the PicoClaw agent on Render. The PicoClaw service runs on
 ## What does NOT survive a redeploy (known limits)
 
 - The dashboard password (stored in `.security.yml`, outside the workspace; the launcher has no password env var). Re-set it on `/launcher-setup` after a redeploy.
-- The launcher model config (stored in `/root/.picoclaw/config.json`, outside the workspace). Re-add the default model on the Models page after a redeploy.
+- The launcher's own model config (stored in `/root/.picoclaw/config.json`, outside the workspace — its format could not be safely inspected, so bootstrap does not guess-write it). Re-set the default model on the Models page after a redeploy and verify it on the Models page.
 - The agent chat history. The workspace (SOUL, skills, tools, configs, crons, state) DOES survive — that is what this repo restores.
+
+## What DOES survive (workspace config files)
+
+The model API keys and the Telegram token live inside the workspace, so
+the bootstrap restore covers them — provided their rows exist in
+Supabase `agent_files` (the agent syncs them there):
+
+- `config/providers.json` — custom model API keys (freellmapi, Gemini, 9router).
+- `config/telegram.json` — the Telegram bot token.
+- `config/data-apis.json` — other keys (CoinMarketCap, Finnhub, Binance, Supabase).
 
 ## Revert
 
